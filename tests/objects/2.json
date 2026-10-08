@@ -1,0 +1,44 @@
+{
+  "id": 1,
+  "type": "management_group",
+  "children": [
+    {
+      "id": 2,
+      "type": "management_group",
+      "children": []
+    },
+    {
+      "id": 3,
+      "type": "subscription",
+      "children": [
+        {
+          "id": 4,
+          "type": "subscription",
+          "children": [
+            {
+              "id": 5,
+              "type": "resource_group",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "resource_group",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "subscription",
+      "children": [
+        {
+          "id": 7,
+          "type": "resource_group",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
