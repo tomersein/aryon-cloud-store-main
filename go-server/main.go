@@ -50,6 +50,8 @@ func main() {
 		c.JSON(http.StatusOK, users)
 	})
 
+	r.POST("/hierarchy", postHierarchy(db))
+
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
