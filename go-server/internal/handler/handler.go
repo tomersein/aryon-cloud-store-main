@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -12,6 +13,9 @@ import (
 
 	"go-server/internal/hierarchy"
 )
+
+// MaxBodyBytes caps a POST body; about 500,000 nodes fit in it.
+const MaxBodyBytes = 32 << 20
 
 type Store interface {
 	Save(ctx context.Context, rows *hierarchy.FlatRows) error
@@ -26,7 +30,13 @@ func Register(r *gin.Engine, store Store) {
 func postHierarchy(store Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var root hierarchy.NodeInput
-		if err := json.NewDecoder(c.Request.Body).Decode(&root); err != nil {
+		body := http.MaxBytesReader(c.Writer, c.Request.Body, MaxBodyBytes)
+		if err := json.NewDecoder(body).Decode(&root); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body is larger than 32 MB"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
 			return
 		}
@@ -41,7 +51,7 @@ func postHierarchy(store Store) gin.HandlerFunc {
 		case errors.Is(err, hierarchy.ErrCycle):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case err != nil:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, err)
 		default:
 			c.JSON(http.StatusOK, gin.H{"id": *root.ID, "nodes": len(rows.IDs)})
 		}
@@ -61,9 +71,15 @@ func getHierarchy(store Store) gin.HandlerFunc {
 		case errors.Is(err, hierarchy.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case err != nil:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, err)
 		default:
 			c.JSON(http.StatusOK, root)
 		}
 	}
+}
+
+// internalError logs the cause and keeps database details away from the client.
+func internalError(c *gin.Context, err error) {
+	log.Printf("%s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }

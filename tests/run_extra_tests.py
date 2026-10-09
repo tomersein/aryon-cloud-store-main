@@ -112,6 +112,13 @@ def test_invalid_posts_are_rejected_and_change_nothing():
     assert_tree(907000, original)
 
 
+def test_oversized_bodies_are_rejected():
+    body = " " * (32 * 1024 * 1024) + '{"id": 911000, "type": "subscription", "children": []}'
+    response = post_raw(body)
+    assert response.status_code == 413, f"expected 413, got {response.status_code}"
+    assert get(911000).status_code == 404
+
+
 def test_a_root_cannot_be_moved_under_its_own_descendant():
     original = node(908000, "management_group", [node(908001)])
     store(original)

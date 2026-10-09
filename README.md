@@ -106,8 +106,10 @@ cd go-server && go test -race ./...  # unit tests, no database needed
 
 | Request | Success | Errors |
 |---|---|---|
-| `POST /hierarchy` with a tree | `200 {"id": <root>, "nodes": <count>}` | `400` malformed JSON, missing `id`/`type`, unknown `type`, duplicate id · `409` the root would end up under its own descendant |
+| `POST /hierarchy` with a tree | `200 {"id": <root>, "nodes": <count>}` | `400` malformed JSON, missing `id`/`type`, unknown `type`, duplicate id · `409` the root would end up under its own descendant · `413` body over 32 MB (about 500,000 nodes) |
 | `GET /hierarchy/{id}` | `200` the subtree under that node | `400` id is not an integer · `404` unknown node |
+
+Unexpected failures return `500 {"error": "internal server error"}`. The cause is logged on the server, never sent to the client.
 
 ## Data model
 
@@ -191,6 +193,6 @@ The server image is multi-stage: a static binary on distroless, non-root, about 
 ## What I'd do next
 
 - Use [sqlc](https://sqlc.dev) to generate type-safe Go from the `.sql` queries.
-- Add a request body size limit, and a depth or size limit on GET, for very large trees.
+- Add a depth or size limit on GET, for very large trees.
 - Move to the `pgx` driver, whose `COPY` support would speed up very large writes.
 - Lock per tree if write throughput becomes the bottleneck.

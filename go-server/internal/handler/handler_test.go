@@ -38,6 +38,8 @@ func serve(store Store, method, path, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
+const internalErrorBody = `{"error":"internal server error"}`
+
 const validTree = `{"id":1,"type":"management_group","children":[{"id":2,"type":"subscription","children":[]}]}`
 
 func TestPostHierarchy(t *testing.T) {
@@ -46,12 +48,14 @@ func TestPostHierarchy(t *testing.T) {
 		saveErr   error
 		wantCode  int
 		wantSaved bool
+		wantBody  string
 	}{
-		"valid tree":        {validTree, nil, http.StatusOK, true},
-		"broken JSON":       {`{"id":`, nil, http.StatusBadRequest, false},
-		"invalid tree":      {`{"id":1,"type":"vm","children":[]}`, nil, http.StatusBadRequest, false},
-		"would form a loop": {validTree, hierarchy.ErrCycle, http.StatusConflict, true},
-		"database failure":  {validTree, errors.New("connection reset"), http.StatusInternalServerError, true},
+		"valid tree":        {validTree, nil, http.StatusOK, true, ""},
+		"broken JSON":       {`{"id":`, nil, http.StatusBadRequest, false, ""},
+		"invalid tree":      {`{"id":1,"type":"vm","children":[]}`, nil, http.StatusBadRequest, false, ""},
+		"body over limit":   {strings.Repeat(" ", MaxBodyBytes) + validTree, nil, http.StatusRequestEntityTooLarge, false, ""},
+		"would form a loop": {validTree, hierarchy.ErrCycle, http.StatusConflict, true, ""},
+		"database failure":  {validTree, errors.New(`pq: relation "nodes" does not exist`), http.StatusInternalServerError, true, internalErrorBody},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -62,6 +66,9 @@ func TestPostHierarchy(t *testing.T) {
 			}
 			if (store.saved != nil) != tc.wantSaved {
 				t.Fatalf("store called = %v, want %v", store.saved != nil, tc.wantSaved)
+			}
+			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
+				t.Fatalf("body = %s, want %s", rec.Body, tc.wantBody)
 			}
 		})
 	}
@@ -78,7 +85,7 @@ func TestGetHierarchy(t *testing.T) {
 		"found":          {"/hierarchy/1", &fakeStore{tree: tree}, http.StatusOK, `{"id":1,"type":"management_group","children":[]}`},
 		"not found":      {"/hierarchy/7", &fakeStore{loadErr: hierarchy.ErrNotFound}, http.StatusNotFound, ""},
 		"non-numeric id": {"/hierarchy/abc", &fakeStore{}, http.StatusBadRequest, ""},
-		"database error": {"/hierarchy/1", &fakeStore{loadErr: errors.New("timeout")}, http.StatusInternalServerError, ""},
+		"database error": {"/hierarchy/1", &fakeStore{loadErr: errors.New("pq: canceling statement")}, http.StatusInternalServerError, internalErrorBody},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
