@@ -51,7 +51,9 @@ func TestPostHierarchy(t *testing.T) {
 		wantBody  string
 	}{
 		"valid tree":        {validTree, nil, http.StatusOK, true, ""},
-		"broken JSON":       {`{"id":`, nil, http.StatusBadRequest, false, ""},
+		"broken JSON":       {`{"id":`, nil, http.StatusBadRequest, false, "the body must be a single hierarchy object"},
+		"syntax error":      {`{"id":1,}`, nil, http.StatusBadRequest, false, "invalid JSON at byte"},
+		"wrong field type":  {`{"id":1.5,"type":"subscription"}`, nil, http.StatusBadRequest, false, `field \"id\" has the wrong type: got a JSON number 1.5`},
 		"invalid tree":      {`{"id":1,"type":"vm","children":[]}`, nil, http.StatusBadRequest, false, ""},
 		"body over limit":   {strings.Repeat(" ", MaxBodyBytes) + validTree, nil, http.StatusRequestEntityTooLarge, false, ""},
 		"would form a loop": {validTree, hierarchy.ErrCycle, http.StatusConflict, true, ""},
@@ -67,8 +69,11 @@ func TestPostHierarchy(t *testing.T) {
 			if (store.saved != nil) != tc.wantSaved {
 				t.Fatalf("store called = %v, want %v", store.saved != nil, tc.wantSaved)
 			}
-			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
-				t.Fatalf("body = %s, want %s", rec.Body, tc.wantBody)
+			if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Fatalf("body = %s, want it to contain %s", rec.Body, tc.wantBody)
+			}
+			if strings.Contains(rec.Body.String(), "NodeInput") {
+				t.Fatalf("body exposes Go type names: %s", rec.Body)
 			}
 		})
 	}

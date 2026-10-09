@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -34,10 +35,10 @@ func postHierarchy(store Store) gin.HandlerFunc {
 		if err := json.NewDecoder(body).Decode(&root); err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body is larger than 32 MB"})
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("request body is larger than %d MB", MaxBodyBytes>>20)})
 				return
 			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": describeDecodeError(err)})
 			return
 		}
 		rows, err := hierarchy.Flatten(&root)
@@ -51,7 +52,7 @@ func postHierarchy(store Store) gin.HandlerFunc {
 		case errors.Is(err, hierarchy.ErrCycle):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case err != nil:
-			internalError(c, err)
+			InternalError(c, err)
 		default:
 			c.JSON(http.StatusOK, gin.H{"id": *root.ID, "nodes": len(rows.IDs)})
 		}
@@ -71,15 +72,29 @@ func getHierarchy(store Store) gin.HandlerFunc {
 		case errors.Is(err, hierarchy.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case err != nil:
-			internalError(c, err)
+			InternalError(c, err)
 		default:
 			c.JSON(http.StatusOK, root)
 		}
 	}
 }
 
-// internalError logs the cause and keeps database details away from the client.
-func internalError(c *gin.Context, err error) {
+// InternalError logs the cause and keeps database details away from the client.
+func InternalError(c *gin.Context, err error) {
 	log.Printf("%s %s: %v", c.Request.Method, c.Request.URL.Path, err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+}
+
+// describeDecodeError reports what is wrong with the body without exposing Go type names.
+func describeDecodeError(err error) string {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syntaxErr):
+		return fmt.Sprintf("invalid JSON at byte %d", syntaxErr.Offset)
+	case errors.As(err, &typeErr) && typeErr.Field != "":
+		return fmt.Sprintf("field %q has the wrong type: got a JSON %s", typeErr.Field, typeErr.Value)
+	default:
+		return "invalid JSON: the body must be a single hierarchy object"
+	}
 }

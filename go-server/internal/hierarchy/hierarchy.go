@@ -3,8 +3,10 @@
 package hierarchy
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 var (
@@ -31,7 +33,7 @@ var validTypes = map[string]bool{
 	"resource_group":   true,
 }
 
-// FlatRows holds the tree as parallel columns, root first.
+// FlatRows holds the tree as parallel columns. IDs[0] is always the root.
 // The root's parent is recorded as 0 and is never written.
 type FlatRows struct {
 	IDs       []int64
@@ -45,6 +47,7 @@ type NodeRow struct {
 	ID       int64
 	Type     string
 	ParentID int64
+	Position int32
 }
 
 func Flatten(root *NodeInput) (*FlatRows, error) {
@@ -85,26 +88,31 @@ func Flatten(root *NodeInput) (*FlatRows, error) {
 	return rows, nil
 }
 
-// BuildTree expects the root first and every parent before its children,
-// with siblings in position order.
-func BuildTree(rows []NodeRow) (*Node, error) {
-	if len(rows) == 0 {
+// BuildTree assembles the subtree under rootID from rows in any order.
+// It returns nil when rootID is not among the rows.
+func BuildTree(rootID int64, rows []NodeRow) (*Node, error) {
+	byID := make(map[int64]*Node, len(rows))
+	for _, r := range rows {
+		byID[r.ID] = &Node{ID: r.ID, Type: r.Type, Children: []*Node{}}
+	}
+	root, ok := byID[rootID]
+	if !ok {
 		return nil, nil
 	}
-	byID := make(map[int64]*Node, len(rows))
-	var root *Node
-	for i, r := range rows {
-		node := &Node{ID: r.ID, Type: r.Type, Children: []*Node{}}
-		byID[r.ID] = node
-		if i == 0 {
-			root = node
+
+	sorted := slices.Clone(rows)
+	slices.SortFunc(sorted, func(a, b NodeRow) int {
+		return cmp.Or(cmp.Compare(a.ParentID, b.ParentID), cmp.Compare(a.Position, b.Position))
+	})
+	for _, r := range sorted {
+		if r.ID == rootID {
 			continue
 		}
 		parent, ok := byID[r.ParentID]
 		if !ok {
-			return nil, fmt.Errorf("node %d arrived before its parent %d", r.ID, r.ParentID)
+			return nil, fmt.Errorf("node %d has parent %d outside the subtree", r.ID, r.ParentID)
 		}
-		parent.Children = append(parent.Children, node)
+		parent.Children = append(parent.Children, byID[r.ID])
 	}
 	return root, nil
 }

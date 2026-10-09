@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -65,15 +64,15 @@ func TestFlattenRejectsInvalidTrees(t *testing.T) {
 }
 
 func TestBuildTree(t *testing.T) {
-	t.Run("no rows means not found", func(t *testing.T) {
-		root, err := BuildTree(nil)
+	t.Run("missing root means not found", func(t *testing.T) {
+		root, err := BuildTree(1, nil)
 		if root != nil || err != nil {
 			t.Fatalf("got %v, %v", root, err)
 		}
 	})
 
 	t.Run("leaves serialize with empty children", func(t *testing.T) {
-		root, err := BuildTree([]NodeRow{{ID: 1, Type: "subscription"}})
+		root, err := BuildTree(1, []NodeRow{{ID: 1, Type: "subscription"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,52 +82,38 @@ func TestBuildTree(t *testing.T) {
 		}
 	})
 
+	t.Run("rows in any order, siblings by position", func(t *testing.T) {
+		root, err := BuildTree(1, []NodeRow{
+			{ID: 5, Type: "resource_group", ParentID: 3, Position: 0},
+			{ID: 2, Type: "subscription", ParentID: 1, Position: 1},
+			{ID: 1, Type: "management_group", ParentID: 42},
+			{ID: 3, Type: "subscription", ParentID: 1, Position: 0},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := json.Marshal(root)
+		want := `{"id":1,"type":"management_group","children":[` +
+			`{"id":3,"type":"subscription","children":[{"id":5,"type":"resource_group","children":[]}]},` +
+			`{"id":2,"type":"subscription","children":[]}]}`
+		if string(out) != want {
+			t.Fatalf("got  %s\nwant %s", out, want)
+		}
+	})
+
 	t.Run("orphan row is an error", func(t *testing.T) {
-		_, err := BuildTree([]NodeRow{{ID: 1, Type: "subscription"}, {ID: 2, Type: "subscription", ParentID: 99}})
+		_, err := BuildTree(1, []NodeRow{{ID: 1, Type: "subscription"}, {ID: 2, Type: "subscription", ParentID: 99}})
 		if err == nil {
 			t.Fatal("expected an error")
 		}
 	})
 }
 
-// asStored orders flattened rows the way the GET query returns them.
+// asStored turns flattened rows into stored rows, in reverse to show order does not matter.
 func asStored(rows *FlatRows) []NodeRow {
-	depth := map[int64]int{}
-	parentOf := map[int64]int64{}
-	for i, id := range rows.IDs {
-		parentOf[id] = rows.Parents[i]
-	}
-	var depthOf func(id int64) int
-	depthOf = func(id int64) int {
-		if id == rows.IDs[0] {
-			return 0
-		}
-		if d, ok := depth[id]; ok {
-			return d
-		}
-		depth[id] = depthOf(parentOf[id]) + 1
-		return depth[id]
-	}
-
-	idx := make([]int, len(rows.IDs))
-	for i := range idx {
-		idx[i] = i
-	}
-	sort.Slice(idx, func(a, b int) bool {
-		ia, ib := idx[a], idx[b]
-		da, db := depthOf(rows.IDs[ia]), depthOf(rows.IDs[ib])
-		if da != db {
-			return da < db
-		}
-		if rows.Parents[ia] != rows.Parents[ib] {
-			return rows.Parents[ia] < rows.Parents[ib]
-		}
-		return rows.Positions[ia] < rows.Positions[ib]
-	})
-
-	out := make([]NodeRow, len(idx))
-	for i, j := range idx {
-		out[i] = NodeRow{ID: rows.IDs[j], Type: rows.Types[j], ParentID: rows.Parents[j]}
+	out := make([]NodeRow, len(rows.IDs))
+	for i := range rows.IDs {
+		out[len(out)-1-i] = NodeRow{ID: rows.IDs[i], Type: rows.Types[i], ParentID: rows.Parents[i], Position: rows.Positions[i]}
 	}
 	return out
 }
@@ -148,7 +133,7 @@ func TestRoundTripOfProvidedObjects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			root, err := BuildTree(asStored(rows))
+			root, err := BuildTree(rows.IDs[0], asStored(rows))
 			if err != nil {
 				t.Fatal(err)
 			}
