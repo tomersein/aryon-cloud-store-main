@@ -119,8 +119,10 @@ jobs:
           severity-cutoff: high
           output-format: table
 
+  # Advisory only: the report never fails the pipeline.
   zanadir:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -133,4 +135,5 @@ jobs:
           output-file: zanadir.md
 
       - name: Publish the report
-        run: cat zanadir.md >> "$GITHUB_STEP_SUMMARY"
+        if: always()
+        run: cat zanadir.md >> "$GITHUB_STEP_SUMMARY" || echo "zanadir produced no report" >> "$GITHUB_STEP_SUMMARY"
