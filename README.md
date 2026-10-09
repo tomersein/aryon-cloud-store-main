@@ -163,6 +163,7 @@ The 10,101-node tree in `run_extra_tests.py` stores in about 70 ms and reads in 
 - **Writers are serialized** with a transaction-scoped advisory lock. Readers are never blocked (MVCC). Each POST is only a handful of set-based statements, so a single writer lane is cheap.
   - Locking per tree would allow parallel writes, but a POST can move nodes in from any other tree, so the lock set isn't known up front. That's a reasonable next step only if write throughput becomes the bottleneck.
   - `run_extra_tests.py` fires 20 concurrent POSTs at one tree and checks that the result is exactly one of the posted versions.
+- **Queued writers do not hold connections.** Inside one server process, only one POST at a time waits for the advisory lock; the rest wait in Go without a database connection, and give up if the client disconnects. The pool is capped at 20 connections, well under Postgres' default of 100, which the Python server shares. With the lock held, 130 concurrent POSTs all succeed using 4 connections, and GETs keep answering in about 20 ms.
 
 ## Code layout (`go-server/`)
 

@@ -32,6 +32,10 @@ func main() {
 	}
 	defer db.Close()
 
+	// Stay well under Postgres' max_connections (100), which the Python server shares.
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(20)
+
 	// Test the connection
 	if err := db.Ping(); err != nil {
 		log.Fatal("Failed to ping database:", err)
@@ -45,9 +49,7 @@ func main() {
 	r.GET("/tenants", func(c *gin.Context) {
 		users, err := getTenants(db)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			handler.InternalError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, users)

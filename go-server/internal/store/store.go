@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/lib/pq"
 
@@ -15,16 +16,29 @@ const writeLockKey = 7340001
 
 type Postgres struct {
 	db *sql.DB
+	// writer lets one request per process wait for the advisory lock, so
+	// queued writers wait here instead of each holding a pooled connection.
+	writer chan struct{}
 }
 
 func NewPostgres(db *sql.DB) *Postgres {
-	return &Postgres{db: db}
+	return &Postgres{db: db, writer: make(chan struct{}, 1)}
 }
 
 // Save makes the stored subtree under rows' root match rows exactly.
 // The root keeps its current parent and position, if it already exists.
 func (s *Postgres) Save(ctx context.Context, rows *hierarchy.FlatRows) error {
+	if len(rows.IDs) == 0 {
+		return errors.New("no nodes to save")
+	}
 	rootID := rows.IDs[0]
+
+	select {
+	case s.writer <- struct{}{}:
+		defer func() { <-s.writer }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -91,12 +105,12 @@ func (s *Postgres) Save(ctx context.Context, rows *hierarchy.FlatRows) error {
 func (s *Postgres) Load(ctx context.Context, rootID int64) (*hierarchy.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE subtree AS (
-			SELECT id, type, parent_id, position, 0 AS depth FROM nodes WHERE id = $1
+			SELECT id, type, parent_id, position FROM nodes WHERE id = $1
 			UNION ALL
-			SELECT n.id, n.type, n.parent_id, n.position, s.depth + 1
+			SELECT n.id, n.type, n.parent_id, n.position
 			FROM nodes n JOIN subtree s ON n.parent_id = s.id
 		)
-		SELECT id, type, COALESCE(parent_id, 0) FROM subtree ORDER BY depth, parent_id, position`,
+		SELECT id, type, COALESCE(parent_id, 0), position FROM subtree`,
 		rootID,
 	)
 	if err != nil {
@@ -107,7 +121,7 @@ func (s *Postgres) Load(ctx context.Context, rootID int64) (*hierarchy.Node, err
 	var flat []hierarchy.NodeRow
 	for rows.Next() {
 		var r hierarchy.NodeRow
-		if err := rows.Scan(&r.ID, &r.Type, &r.ParentID); err != nil {
+		if err := rows.Scan(&r.ID, &r.Type, &r.ParentID, &r.Position); err != nil {
 			return nil, err
 		}
 		flat = append(flat, r)
@@ -116,7 +130,7 @@ func (s *Postgres) Load(ctx context.Context, rootID int64) (*hierarchy.Node, err
 		return nil, err
 	}
 
-	root, err := hierarchy.BuildTree(flat)
+	root, err := hierarchy.BuildTree(rootID, flat)
 	if err != nil {
 		return nil, err
 	}
