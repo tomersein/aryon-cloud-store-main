@@ -9,6 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+
+	"go-server/internal/handler"
+	"go-server/internal/store"
 )
 
 type Tenant struct {
@@ -20,7 +23,7 @@ func main() {
 	// Database connection
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgresql://aryon:aryon@localhost:5432/aryondb?sslmode=disable"
+		dbURL = "postgresql://aryon:aryon@localhost:5432/aryondb?sslmode=disable" //nolint:gosec // local docker-compose default
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -28,6 +31,10 @@ func main() {
 		log.Fatal("Failed to connect to database:", err)
 	}
 	defer db.Close()
+
+	// Stay well under Postgres' max_connections (100), which the Python server shares.
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(20)
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
@@ -42,20 +49,22 @@ func main() {
 	r.GET("/tenants", func(c *gin.Context) {
 		users, err := getTenants(db)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			handler.InternalError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, users)
 	})
+
+	handler.Register(r, store.NewPostgres(db))
 
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	r.Run(":" + port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal("Server stopped:", err)
+	}
 }
 
 func getTenants(db *sql.DB) ([]Tenant, error) {

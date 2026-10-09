@@ -11,3 +11,11 @@ VALUES
     ('amazon'),
     ('google');
 
+CREATE TABLE nodes (
+    id        BIGINT PRIMARY KEY,
+    type      TEXT   NOT NULL CHECK (type IN ('management_group', 'subscription', 'resource_group')),
+    parent_id BIGINT REFERENCES nodes (id),
+    position  INT    NOT NULL DEFAULT 0
+);
+
+CREATE INDEX nodes_parent_idx ON nodes (parent_id, position);

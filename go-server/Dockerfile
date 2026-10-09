@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine
+FROM golang:1.27-alpine AS build
 
 WORKDIR /app
 
@@ -7,8 +7,12 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o main .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /server .
+
+FROM gcr.io/distroless/static:nonroot
+
+COPY --from=build /server /server
 
 EXPOSE 8080
 
-CMD ["./main"]
+ENTRYPOINT ["/server"]
