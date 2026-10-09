@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: go-server/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: go-server
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: go-server/go.sum
+
+      - name: Run unit tests
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: |
+          {
+            echo '### Unit test coverage'
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Postgres and the Go server
+        run: |
+          docker compose up -d --build --wait postgres go-server
+          for _ in $(seq 1 30); do
+            curl -sf localhost:8080/tenants > /dev/null && exit 0
+            sleep 1
+          done
+          echo "Go server did not become ready" >&2
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      # run_tests.py always exits 0, so count its passes against the number of test objects.
+      - name: Provided tests
+        run: |
+          python tests/run_tests.py | tee provided.log
+          passed=$(grep -c '✅' provided.log || true)
+          total=$(ls tests/objects/*.json | wc -l)
+          echo "$passed/$total provided tests passed"
+          test "$passed" -eq "$total"
+
+      - name: Edge-case tests
+        run: python tests/run_extra_tests.py
+
+      - name: Server logs
+        if: failure()
+        run: docker compose logs
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: govulncheck (reachable Go vulnerabilities)
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: stable
+          work-dir: go-server
+
+      - name: Grype (repository dependencies)
+        uses: anchore/scan-action@v6
+        with:
+          path: .
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+      - name: Build the Go server image
+        run: docker build -t cloudstore-go:ci go-server
+
+      - name: Grype (Go server image)
+        uses: anchore/scan-action@v6
+        with:
+          image: cloudstore-go:ci
+          only-fixed: true
+          severity-cutoff: high
+          output-format: table
+
+  zanadir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan CI coverage with zanadir
+        uses: mustachecase/zanadir-action@v1.10
+        with:
+          dir: .
+          enforce: false
+          output: markdown
+          output-file: zanadir.md
+
+      - name: Publish the report
+        run: cat zanadir.md >> "$GITHUB_STEP_SUMMARY"
