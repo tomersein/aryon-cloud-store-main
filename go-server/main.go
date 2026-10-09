@@ -20,7 +20,7 @@ func main() {
 	// Database connection
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgresql://aryon:aryon@localhost:5432/aryondb?sslmode=disable"
+		dbURL = "postgresql://aryon:aryon@localhost:5432/aryondb?sslmode=disable" //nolint:gosec // local docker-compose default
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -50,15 +50,16 @@ func main() {
 		c.JSON(http.StatusOK, users)
 	})
 
-	r.POST("/hierarchy", postHierarchy(db))
-	r.GET("/hierarchy/:id", getHierarchy(db))
+	registerHierarchyRoutes(r, &pgStore{db: db})
 
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	r.Run(":" + port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal("Server stopped:", err)
+	}
 }
 
 func getTenants(db *sql.DB) ([]Tenant, error) {
