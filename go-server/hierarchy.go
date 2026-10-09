@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
@@ -169,6 +170,70 @@ func postHierarchy(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusOK, gin.H{"id": *root.ID, "nodes": len(rows.ids)})
+		}
+	}
+}
+
+var errNotFound = errors.New("node not found")
+
+func fetchHierarchy(db *sql.DB, rootID int64) (*Node, error) {
+	// Ordering by depth guarantees a parent is built before its children.
+	rows, err := db.Query(`
+		WITH RECURSIVE subtree AS (
+			SELECT id, type, parent_id, position, 0 AS depth FROM nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id, n.type, n.parent_id, n.position, s.depth + 1
+			FROM nodes n JOIN subtree s ON n.parent_id = s.id
+		)
+		SELECT id, type, parent_id FROM subtree ORDER BY depth, parent_id, position`,
+		rootID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var root *Node
+	byID := map[int64]*Node{}
+	for rows.Next() {
+		node := &Node{Children: []*Node{}}
+		var parentID sql.NullInt64
+		if err := rows.Scan(&node.ID, &node.Type, &parentID); err != nil {
+			return nil, err
+		}
+		byID[node.ID] = node
+		if root == nil {
+			root = node
+			continue
+		}
+		parent := byID[parentID.Int64]
+		parent.Children = append(parent.Children, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return nil, errNotFound
+	}
+	return root, nil
+}
+
+func getHierarchy(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "node id must be an integer"})
+			return
+		}
+
+		root, err := fetchHierarchy(db, id)
+		switch {
+		case errors.Is(err, errNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case err != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusOK, root)
 		}
 	}
 }

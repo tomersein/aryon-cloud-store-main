@@ -51,6 +51,7 @@ func main() {
 	})
 
 	r.POST("/hierarchy", postHierarchy(db))
+	r.GET("/hierarchy/:id", getHierarchy(db))
 
 	// Start server
 	port := os.Getenv("PORT")
