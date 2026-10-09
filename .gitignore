@@ -85,3 +85,6 @@ Godeps/
 .Trashes
 ehthumbs.db
 Thumbs.db
+# Postman local workspace
+.postman/
+postman/
