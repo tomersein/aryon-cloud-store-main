@@ -9,6 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+
+	"go-server/internal/handler"
+	"go-server/internal/store"
 )
 
 type Tenant struct {
@@ -50,7 +53,7 @@ func main() {
 		c.JSON(http.StatusOK, users)
 	})
 
-	registerHierarchyRoutes(r, &pgStore{db: db})
+	handler.Register(r, store.NewPostgres(db))
 
 	// Start server
 	port := os.Getenv("PORT")

@@ -1,4 +1,5 @@
-package main
+// Package handler exposes hierarchies over HTTP.
+package handler
 
 import (
 	"context"
@@ -8,26 +9,28 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"go-server/internal/hierarchy"
 )
 
-type hierarchyStore interface {
-	Save(ctx context.Context, rows *flatRows) error
-	Load(ctx context.Context, rootID int64) (*Node, error)
+type Store interface {
+	Save(ctx context.Context, rows *hierarchy.FlatRows) error
+	Load(ctx context.Context, rootID int64) (*hierarchy.Node, error)
 }
 
-func registerHierarchyRoutes(r *gin.Engine, store hierarchyStore) {
+func Register(r *gin.Engine, store Store) {
 	r.POST("/hierarchy", postHierarchy(store))
 	r.GET("/hierarchy/:id", getHierarchy(store))
 }
 
-func postHierarchy(store hierarchyStore) gin.HandlerFunc {
+func postHierarchy(store Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var root nodeInput
+		var root hierarchy.NodeInput
 		if err := json.NewDecoder(c.Request.Body).Decode(&root); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON: " + err.Error()})
 			return
 		}
-		rows, err := flatten(&root)
+		rows, err := hierarchy.Flatten(&root)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -35,17 +38,17 @@ func postHierarchy(store hierarchyStore) gin.HandlerFunc {
 
 		err = store.Save(c.Request.Context(), rows)
 		switch {
-		case errors.Is(err, errCycle):
+		case errors.Is(err, hierarchy.ErrCycle):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case err != nil:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		default:
-			c.JSON(http.StatusOK, gin.H{"id": *root.ID, "nodes": len(rows.ids)})
+			c.JSON(http.StatusOK, gin.H{"id": *root.ID, "nodes": len(rows.IDs)})
 		}
 	}
 }
 
-func getHierarchy(store hierarchyStore) gin.HandlerFunc {
+func getHierarchy(store Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil {
@@ -55,7 +58,7 @@ func getHierarchy(store hierarchyStore) gin.HandlerFunc {
 
 		root, err := store.Load(c.Request.Context(), id)
 		switch {
-		case errors.Is(err, errNotFound):
+		case errors.Is(err, hierarchy.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case err != nil:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

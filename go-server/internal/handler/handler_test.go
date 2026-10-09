@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"context"
@@ -9,28 +9,30 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"go-server/internal/hierarchy"
 )
 
 type fakeStore struct {
-	saved   *flatRows
+	saved   *hierarchy.FlatRows
 	saveErr error
-	tree    *Node
+	tree    *hierarchy.Node
 	loadErr error
 }
 
-func (f *fakeStore) Save(_ context.Context, rows *flatRows) error {
+func (f *fakeStore) Save(_ context.Context, rows *hierarchy.FlatRows) error {
 	f.saved = rows
 	return f.saveErr
 }
 
-func (f *fakeStore) Load(_ context.Context, _ int64) (*Node, error) {
+func (f *fakeStore) Load(_ context.Context, _ int64) (*hierarchy.Node, error) {
 	return f.tree, f.loadErr
 }
 
-func serve(store hierarchyStore, method, path, body string) *httptest.ResponseRecorder {
+func serve(store Store, method, path, body string) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	registerHierarchyRoutes(r, store)
+	Register(r, store)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 	return rec
@@ -48,7 +50,7 @@ func TestPostHierarchy(t *testing.T) {
 		"valid tree":        {validTree, nil, http.StatusOK, true},
 		"broken JSON":       {`{"id":`, nil, http.StatusBadRequest, false},
 		"invalid tree":      {`{"id":1,"type":"vm","children":[]}`, nil, http.StatusBadRequest, false},
-		"would form a loop": {validTree, errCycle, http.StatusConflict, true},
+		"would form a loop": {validTree, hierarchy.ErrCycle, http.StatusConflict, true},
 		"database failure":  {validTree, errors.New("connection reset"), http.StatusInternalServerError, true},
 	}
 	for name, tc := range tests {
@@ -66,7 +68,7 @@ func TestPostHierarchy(t *testing.T) {
 }
 
 func TestGetHierarchy(t *testing.T) {
-	tree := &Node{ID: 1, Type: "management_group", Children: []*Node{}}
+	tree := &hierarchy.Node{ID: 1, Type: "management_group", Children: []*hierarchy.Node{}}
 	tests := map[string]struct {
 		path     string
 		store    *fakeStore
@@ -74,7 +76,7 @@ func TestGetHierarchy(t *testing.T) {
 		wantBody string
 	}{
 		"found":          {"/hierarchy/1", &fakeStore{tree: tree}, http.StatusOK, `{"id":1,"type":"management_group","children":[]}`},
-		"not found":      {"/hierarchy/7", &fakeStore{loadErr: errNotFound}, http.StatusNotFound, ""},
+		"not found":      {"/hierarchy/7", &fakeStore{loadErr: hierarchy.ErrNotFound}, http.StatusNotFound, ""},
 		"non-numeric id": {"/hierarchy/abc", &fakeStore{}, http.StatusBadRequest, ""},
 		"database error": {"/hierarchy/1", &fakeStore{loadErr: errors.New("timeout")}, http.StatusInternalServerError, ""},
 	}

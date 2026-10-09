@@ -1,4 +1,4 @@
-package main
+package hierarchy
 
 import (
 	"encoding/json"
@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-func parseInput(t *testing.T, body string) *nodeInput {
+func parseInput(t *testing.T, body string) *NodeInput {
 	t.Helper()
-	var n nodeInput
+	var n NodeInput
 	if err := json.Unmarshal([]byte(body), &n); err != nil {
 		t.Fatalf("bad test JSON: %v", err)
 	}
@@ -20,19 +20,19 @@ func parseInput(t *testing.T, body string) *nodeInput {
 }
 
 func TestFlattenRecordsParentsAndPositions(t *testing.T) {
-	rows, err := flatten(parseInput(t, `{"id":1,"type":"management_group","children":[
+	rows, err := Flatten(parseInput(t, `{"id":1,"type":"management_group","children":[
 		{"id":3,"type":"subscription","children":[{"id":5,"type":"resource_group","children":[]}]},
 		{"id":2,"type":"subscription","children":[]}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows.ids[0] != 1 {
-		t.Fatalf("root must come first, got %v", rows.ids)
+	if rows.IDs[0] != 1 {
+		t.Fatalf("root must come first, got %v", rows.IDs)
 	}
 
 	got := map[int64][2]int64{}
-	for i, id := range rows.ids {
-		got[id] = [2]int64{rows.parents[i], int64(rows.positions[i])}
+	for i, id := range rows.IDs {
+		got[id] = [2]int64{rows.Parents[i], int64(rows.Positions[i])}
 	}
 	want := map[int64][2]int64{1: {0, 0}, 3: {1, 0}, 2: {1, 1}, 5: {3, 0}}
 	if !reflect.DeepEqual(got, want) {
@@ -56,7 +56,7 @@ func TestFlattenRejectsInvalidTrees(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := flatten(parseInput(t, tc.body))
+			_, err := Flatten(parseInput(t, tc.body))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want it to mention %q", err, tc.wantErr)
 			}
@@ -66,14 +66,14 @@ func TestFlattenRejectsInvalidTrees(t *testing.T) {
 
 func TestBuildTree(t *testing.T) {
 	t.Run("no rows means not found", func(t *testing.T) {
-		root, err := buildTree(nil)
+		root, err := BuildTree(nil)
 		if root != nil || err != nil {
 			t.Fatalf("got %v, %v", root, err)
 		}
 	})
 
 	t.Run("leaves serialize with empty children", func(t *testing.T) {
-		root, err := buildTree([]nodeRow{{ID: 1, Type: "subscription"}})
+		root, err := BuildTree([]NodeRow{{ID: 1, Type: "subscription"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +84,7 @@ func TestBuildTree(t *testing.T) {
 	})
 
 	t.Run("orphan row is an error", func(t *testing.T) {
-		_, err := buildTree([]nodeRow{{ID: 1, Type: "subscription"}, {ID: 2, Type: "subscription", ParentID: 99}})
+		_, err := BuildTree([]NodeRow{{ID: 1, Type: "subscription"}, {ID: 2, Type: "subscription", ParentID: 99}})
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -92,15 +92,15 @@ func TestBuildTree(t *testing.T) {
 }
 
 // asStored orders flattened rows the way the GET query returns them.
-func asStored(rows *flatRows) []nodeRow {
+func asStored(rows *FlatRows) []NodeRow {
 	depth := map[int64]int{}
 	parentOf := map[int64]int64{}
-	for i, id := range rows.ids {
-		parentOf[id] = rows.parents[i]
+	for i, id := range rows.IDs {
+		parentOf[id] = rows.Parents[i]
 	}
 	var depthOf func(id int64) int
 	depthOf = func(id int64) int {
-		if id == rows.ids[0] {
+		if id == rows.IDs[0] {
 			return 0
 		}
 		if d, ok := depth[id]; ok {
@@ -110,31 +110,31 @@ func asStored(rows *flatRows) []nodeRow {
 		return depth[id]
 	}
 
-	idx := make([]int, len(rows.ids))
+	idx := make([]int, len(rows.IDs))
 	for i := range idx {
 		idx[i] = i
 	}
 	sort.Slice(idx, func(a, b int) bool {
 		ia, ib := idx[a], idx[b]
-		da, db := depthOf(rows.ids[ia]), depthOf(rows.ids[ib])
+		da, db := depthOf(rows.IDs[ia]), depthOf(rows.IDs[ib])
 		if da != db {
 			return da < db
 		}
-		if rows.parents[ia] != rows.parents[ib] {
-			return rows.parents[ia] < rows.parents[ib]
+		if rows.Parents[ia] != rows.Parents[ib] {
+			return rows.Parents[ia] < rows.Parents[ib]
 		}
-		return rows.positions[ia] < rows.positions[ib]
+		return rows.Positions[ia] < rows.Positions[ib]
 	})
 
-	out := make([]nodeRow, len(idx))
+	out := make([]NodeRow, len(idx))
 	for i, j := range idx {
-		out[i] = nodeRow{ID: rows.ids[j], Type: rows.types[j], ParentID: rows.parents[j]}
+		out[i] = NodeRow{ID: rows.IDs[j], Type: rows.Types[j], ParentID: rows.Parents[j]}
 	}
 	return out
 }
 
 func TestRoundTripOfProvidedObjects(t *testing.T) {
-	files, err := filepath.Glob("../tests/objects/*.json")
+	files, err := filepath.Glob("../../../tests/objects/*.json")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no test objects found: %v", err)
 	}
@@ -144,11 +144,11 @@ func TestRoundTripOfProvidedObjects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows, err := flatten(parseInput(t, string(original)))
+			rows, err := Flatten(parseInput(t, string(original)))
 			if err != nil {
 				t.Fatal(err)
 			}
-			root, err := buildTree(asStored(rows))
+			root, err := BuildTree(asStored(rows))
 			if err != nil {
 				t.Fatal(err)
 			}

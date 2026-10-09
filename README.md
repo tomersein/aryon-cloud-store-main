@@ -164,12 +164,15 @@ The 10,101-node tree in `run_extra_tests.py` stores in about 70 ms and reads in 
 
 ## Code layout (`go-server/`)
 
-| File | Responsibility |
-|---|---|
-| `main.go` | Configuration, database connection, routes |
-| `handlers.go` | HTTP: parse, validate, map errors to status codes. Depends on a `hierarchyStore` interface |
-| `store.go` | All SQL for the hierarchy (Postgres implementation of the interface) |
-| `hierarchy.go` | Pure tree logic: flatten a request into rows, rebuild a tree from rows |
+```
+main.go                      configuration, database connection, wiring
+internal/
+├── handler/                 HTTP: parse, validate, map errors to status codes
+├── store/                   all SQL: the Postgres implementation of handler.Store
+└── hierarchy/               the tree model, Flatten / BuildTree, domain errors
+```
+
+Dependencies point one way: `handler` and `store` both import `hierarchy`, and never each other. The handler depends only on the `Store` interface, so its unit tests use a fake store and need no database. `store` is covered by the integration tests against real Postgres.
 
 The SQL is handwritten and fully parameterized. The recursive CTEs, the `unnest` bulk upsert and the advisory lock are beyond what Go ORMs express. An ORM would also pull the code toward one query per node.
 

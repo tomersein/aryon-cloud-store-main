@@ -1,29 +1,30 @@
-package main
+// Package store persists hierarchies in Postgres.
+package store
 
 import (
 	"context"
 	"database/sql"
-	"errors"
 
 	"github.com/lib/pq"
-)
 
-var (
-	errCycle    = errors.New("the posted root's current ancestors cannot appear inside its subtree")
-	errNotFound = errors.New("node not found")
+	"go-server/internal/hierarchy"
 )
 
 // writeLockKey serializes writers; readers are never blocked.
 const writeLockKey = 7340001
 
-type pgStore struct {
+type Postgres struct {
 	db *sql.DB
+}
+
+func NewPostgres(db *sql.DB) *Postgres {
+	return &Postgres{db: db}
 }
 
 // Save makes the stored subtree under rows' root match rows exactly.
 // The root keeps its current parent and position, if it already exists.
-func (s *pgStore) Save(ctx context.Context, rows *flatRows) error {
-	rootID := rows.ids[0]
+func (s *Postgres) Save(ctx context.Context, rows *hierarchy.FlatRows) error {
+	rootID := rows.IDs[0]
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -43,13 +44,13 @@ func (s *pgStore) Save(ctx context.Context, rows *flatRows) error {
 			SELECT n.parent_id FROM nodes n JOIN ancestors a ON n.id = a.parent_id
 		)
 		SELECT EXISTS (SELECT 1 FROM ancestors WHERE parent_id = ANY($2))`,
-		rootID, pq.Array(rows.ids),
+		rootID, pq.Array(rows.IDs),
 	).Scan(&cycle)
 	if err != nil {
 		return err
 	}
 	if cycle {
-		return errCycle
+		return hierarchy.ErrCycle
 	}
 
 	_, err = tx.ExecContext(ctx, `
@@ -63,7 +64,7 @@ func (s *pgStore) Save(ctx context.Context, rows *flatRows) error {
 		WHERE nodes.type IS DISTINCT FROM EXCLUDED.type
 		   OR (nodes.id <> $5 AND (nodes.parent_id, nodes.position)
 		       IS DISTINCT FROM (EXCLUDED.parent_id, EXCLUDED.position))`,
-		pq.Array(rows.ids), pq.Array(rows.types), pq.Array(rows.parents), pq.Array(rows.positions), rootID,
+		pq.Array(rows.IDs), pq.Array(rows.Types), pq.Array(rows.Parents), pq.Array(rows.Positions), rootID,
 	)
 	if err != nil {
 		return err
@@ -78,7 +79,7 @@ func (s *pgStore) Save(ctx context.Context, rows *flatRows) error {
 		)
 		DELETE FROM nodes
 		WHERE id IN (SELECT id FROM subtree) AND id <> ALL($2)`,
-		rootID, pq.Array(rows.ids),
+		rootID, pq.Array(rows.IDs),
 	)
 	if err != nil {
 		return err
@@ -87,7 +88,7 @@ func (s *pgStore) Save(ctx context.Context, rows *flatRows) error {
 	return tx.Commit()
 }
 
-func (s *pgStore) Load(ctx context.Context, rootID int64) (*Node, error) {
+func (s *Postgres) Load(ctx context.Context, rootID int64) (*hierarchy.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id, type, parent_id, position, 0 AS depth FROM nodes WHERE id = $1
@@ -103,9 +104,9 @@ func (s *pgStore) Load(ctx context.Context, rootID int64) (*Node, error) {
 	}
 	defer rows.Close()
 
-	var flat []nodeRow
+	var flat []hierarchy.NodeRow
 	for rows.Next() {
-		var r nodeRow
+		var r hierarchy.NodeRow
 		if err := rows.Scan(&r.ID, &r.Type, &r.ParentID); err != nil {
 			return nil, err
 		}
@@ -115,12 +116,12 @@ func (s *pgStore) Load(ctx context.Context, rootID int64) (*Node, error) {
 		return nil, err
 	}
 
-	root, err := buildTree(flat)
+	root, err := hierarchy.BuildTree(flat)
 	if err != nil {
 		return nil, err
 	}
 	if root == nil {
-		return nil, errNotFound
+		return nil, hierarchy.ErrNotFound
 	}
 	return root, nil
 }

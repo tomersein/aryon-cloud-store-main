@@ -1,8 +1,15 @@
-package main
+// Package hierarchy holds the tree model and the conversions between a JSON
+// tree and the flat rows the store reads and writes.
+package hierarchy
 
 import (
 	"errors"
 	"fmt"
+)
+
+var (
+	ErrCycle    = errors.New("the posted root's current ancestors cannot appear inside its subtree")
+	ErrNotFound = errors.New("node not found")
 )
 
 type Node struct {
@@ -11,11 +18,11 @@ type Node struct {
 	Children []*Node `json:"children"`
 }
 
-// nodeInput uses pointers so a missing field can be told apart from a zero value.
-type nodeInput struct {
+// NodeInput uses pointers so a missing field can be told apart from a zero value.
+type NodeInput struct {
 	ID       *int64       `json:"id"`
 	Type     *string      `json:"type"`
-	Children []*nodeInput `json:"children"`
+	Children []*NodeInput `json:"children"`
 }
 
 var validTypes = map[string]bool{
@@ -24,28 +31,28 @@ var validTypes = map[string]bool{
 	"resource_group":   true,
 }
 
-// flatRows holds the tree as parallel columns, ready to pass to unnest().
+// FlatRows holds the tree as parallel columns, root first.
 // The root's parent is recorded as 0 and is never written.
-type flatRows struct {
-	ids       []int64
-	types     []string
-	parents   []int64
-	positions []int32
+type FlatRows struct {
+	IDs       []int64
+	Types     []string
+	Parents   []int64
+	Positions []int32
 }
 
-// nodeRow is one stored node, as read back from the database.
-type nodeRow struct {
+// NodeRow is one stored node, as read back from the database.
+type NodeRow struct {
 	ID       int64
 	Type     string
 	ParentID int64
 }
 
-func flatten(root *nodeInput) (*flatRows, error) {
-	rows := &flatRows{}
+func Flatten(root *NodeInput) (*FlatRows, error) {
+	rows := &FlatRows{}
 	seen := map[int64]bool{}
 
 	type item struct {
-		node     *nodeInput
+		node     *NodeInput
 		parent   int64
 		position int32
 	}
@@ -66,10 +73,10 @@ func flatten(root *nodeInput) (*flatRows, error) {
 		}
 		seen[*n.ID] = true
 
-		rows.ids = append(rows.ids, *n.ID)
-		rows.types = append(rows.types, *n.Type)
-		rows.parents = append(rows.parents, it.parent)
-		rows.positions = append(rows.positions, it.position)
+		rows.IDs = append(rows.IDs, *n.ID)
+		rows.Types = append(rows.Types, *n.Type)
+		rows.Parents = append(rows.Parents, it.parent)
+		rows.Positions = append(rows.Positions, it.position)
 
 		for i, child := range n.Children {
 			stack = append(stack, item{node: child, parent: *n.ID, position: int32(i)}) //nolint:gosec // child counts fit in int32
@@ -78,9 +85,9 @@ func flatten(root *nodeInput) (*flatRows, error) {
 	return rows, nil
 }
 
-// buildTree expects the root first and every parent before its children,
+// BuildTree expects the root first and every parent before its children,
 // with siblings in position order.
-func buildTree(rows []nodeRow) (*Node, error) {
+func BuildTree(rows []NodeRow) (*Node, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
