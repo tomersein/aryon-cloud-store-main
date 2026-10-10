@@ -151,7 +151,9 @@ Why an adjacency list: the requirements stress **moves**, and this is the only c
 
 The request is fully validated before the transaction starts, and any failure rolls back, so a rejected POST changes nothing.
 
-**GET: one recursive query**, ordered by depth, then parent, then position. Go assembles the tree in a single pass because every parent arrives before its children. Being a single statement, it reads a consistent snapshot even while a POST is running.
+**GET: one recursive query** returns the subtree as flat rows, in any order. Go indexes them by id, then attaches each node to its parent with siblings sorted by `position`. Being a single statement, it reads a consistent snapshot even while a POST is running.
+
+These counts are constant: a 3-node tree and a 100,000-node tree cost the same, and nothing is ever issued per node. On the wire, lib/pq by default prepares each parameterized statement in a separate round trip. That makes a POST 10 round trips (4 statements × 2, plus `BEGIN` and `COMMIT`) and a GET 2.
 
 The 10,101-node tree in `run_extra_tests.py` stores in about 70 ms and reads in about 20 ms on a laptop.
 
@@ -195,5 +197,6 @@ The server image is multi-stage: a static binary on distroless, non-root, about 
 
 - Use [sqlc](https://sqlc.dev) to generate type-safe Go from the `.sql` queries.
 - Add a depth or size limit on GET, for very large trees.
+- Add `binary_parameters=yes` to the connection string. lib/pq then sends each statement with its values in one round trip, cutting a POST from 10 round trips to 6 and a GET from 2 to 1. Both test suites pass with it.
 - Move to the `pgx` driver, whose `COPY` support would speed up very large writes.
 - Lock per tree if write throughput becomes the bottleneck.
