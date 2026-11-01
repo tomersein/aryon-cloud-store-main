@@ -1,4 +1,6 @@
 # CloudStore
+
+[![zanadir](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/tomersein/aryon-cloud-store-main/badges/zanadir-badge.json)](https://mustachecase.github.io/scan/?repo=tomersein/aryon-cloud-store-main)
 ## Description
 Cloud environments typically have some hierarchy which is a recursive structure.
 
