@@ -8,6 +8,8 @@ allow:
   - BSL-1.0
   - PSF-2.0
 ignore-packages:
+  # This repository's own Go module, not a dependency.
+  - go-server
   # LGPL with an OpenSSL exception; used unmodified as a dynamically loaded library.
   - psycopg2-binary
   # BSD-3-Clause; syft does not read the dist-info/licenses/ file it ships in.
