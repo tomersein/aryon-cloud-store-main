@@ -191,7 +191,6 @@ The SQL is handwritten and fully parameterized. The recursive CTEs, the `unnest`
 | unit-tests | `go test -race` with a coverage summary |
 | integration-tests | `docker compose` stack, then the provided tests and the edge-case tests |
 | vulnerabilities | `govulncheck` for reachable Go vulnerabilities; Grype over repository dependencies and over the built server image, failing on High or above |
-| zanadir | CI coverage report in the job summary |
 
 `.github/workflows/checks.yml`:
 

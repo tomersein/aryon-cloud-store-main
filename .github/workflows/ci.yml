@@ -135,24 +135,3 @@ jobs:
           output-format: table
 
   # Advisory only: the report never fails the pipeline.
-  zanadir:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Scan CI coverage with zanadir
-        uses: mustachecase/zanadir-action@410eb02c0c1ef382e9234cb9d1da2ffc4cea88be # v1.36
-        with:
-          dir: .
-          enforce: false
-          output: markdown
-          output-file: zanadir.md
-
-      - name: Publish the report
-        if: always()
-        run: cat zanadir.md >> "$GITHUB_STEP_SUMMARY" || echo "zanadir produced no report" >> "$GITHUB_STEP_SUMMARY"
