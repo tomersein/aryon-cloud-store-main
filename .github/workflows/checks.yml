@@ -1,0 +1,229 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfLo "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Scan the full history for secrets
+        run: gitleaks git --redact --verbose .
+
+  sast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.183.0@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Semgrep
+        run: semgrep scan --config p/golang --config p/python --config p/flask --config p/dockerfile --metrics off --error
+
+  iac:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkov (Dockerfiles, compose secrets, workflows)
+        uses: bridgecrewio/checkov-action@c10e2438743528f9e4549758fad8b7a62052541d # v12.3136.0
+        with:
+          directory: .
+          output_format: cli
+          quiet: true
+          compact: true
+
+  workflow-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: 1.31.1
+          advanced-security: false
+
+  end-of-life:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [go-server, python-server, postgres]
+    env:
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -t "cloudstore-$SERVICE:ci" "$SERVICE"
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.1
+
+      - name: Fail on an end-of-life base OS
+        run: trivy image --exit-on-eol 1 --scanners vuln --pkg-types os "cloudstore-$SERVICE:ci"
+
+  load-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start Postgres and the Go server
+        run: |
+          docker compose up -d --build --wait postgres go-server
+          for _ in $(seq 1 30); do
+            curl -sf localhost:8080/tenants > /dev/null && exit 0
+            sleep 1
+          done
+          echo "Go server did not become ready" >&2
+          exit 1
+
+      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+        with:
+          k6-version: 2.3.0
+
+      - name: k6 smoke load test
+        run: k6 run tests/load/smoke.js
+
+      - name: Server logs
+        if: failure()
+        run: docker compose logs
+
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [go-server, python-server, postgres]
+    env:
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -t "cloudstore-$SERVICE:ci" "$SERVICE"
+
+      - name: SBOM of the image (syft)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: cloudstore-${{ matrix.service }}:ci
+          format: spdx-json
+          artifact-name: sbom-${{ matrix.service }}.spdx.json
+          upload-release-assets: false
+
+  base-image-signature:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: Verify the Go server's distroless base is Google's signed build
+        run: |
+          cosign verify gcr.io/distroless/static:nonroot \
+            --certificate-oidc-issuer https://accounts.google.com \
+            --certificate-identity keyless@distroless.iam.gserviceaccount.com > /dev/null
+
+  licenses:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: go-server/go.sum
+
+      # syft reads Go licences from the module cache.
+      - name: Download Go modules
+        working-directory: go-server
+        run: go mod download
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install the Python server's dependencies
+        run: pip install --target "$RUNNER_TEMP/python-deps" -r python-server/requirements.txt
+
+      - name: SBOM of the Go dependencies
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_GOLANG_SEARCH_LOCAL_MOD_CACHE_LICENSES: 'true'
+        with:
+          path: go-server
+          format: spdx-json
+          output-file: ${{ runner.temp }}/go.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SBOM of the Python dependencies
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/python-deps
+          format: spdx-json
+          output-file: ${{ runner.temp }}/python.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Install grant
+        run: |
+          curl -sSfLo "$RUNNER_TEMP/grant.tar.gz" https://github.com/anchore/grant/releases/download/v0.6.8/grant_0.6.8_linux_amd64.tar.gz
+          echo "6500f8bbf0f20fb993de8084686e199f0ba1eb494769ff75454286d5ef63f919  $RUNNER_TEMP/grant.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/grant.tar.gz" -C "$RUNNER_TEMP/bin" grant
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Check licences against .grant.yaml
+        run: grant check "$RUNNER_TEMP/go.spdx.json" "$RUNNER_TEMP/python.spdx.json"

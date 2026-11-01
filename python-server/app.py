@@ -21,4 +21,4 @@ def get_users():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0')
+    app.run(host='0.0.0.0')  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host -- a container must bind all interfaces

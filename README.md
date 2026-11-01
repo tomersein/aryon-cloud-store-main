@@ -91,7 +91,7 @@ You can add tests as you see fit. (but you can't delete existing tests)
 
 # Solution
 
-Implemented in the **Go server** (`go-server/`, port 8080). The Python server is left as provided, with its dependencies upgraded to clear known vulnerabilities.
+Implemented in the **Go server** (`go-server/`, port 8080). The Python server is left as provided, with its dependencies upgraded to clear known vulnerabilities and its image run as a non-root user.
 
 ## Running it
 
@@ -181,7 +181,9 @@ Dependencies point one way: `handler` and `store` both import `hierarchy`, and n
 
 The SQL is handwritten and fully parameterized. The recursive CTEs, the `unnest` bulk upsert and the advisory lock are beyond what Go ORMs express. An ORM would also pull the code toward one query per node.
 
-## CI (`.github/workflows/ci.yml`)
+## CI
+
+`.github/workflows/ci.yml`:
 
 | Job | What it runs |
 |---|---|
@@ -190,6 +192,20 @@ The SQL is handwritten and fully parameterized. The recursive CTEs, the `unnest`
 | integration-tests | `docker compose` stack, then the provided tests and the edge-case tests |
 | vulnerabilities | `govulncheck` for reachable Go vulnerabilities; Grype over repository dependencies and over the built server image, failing on High or above |
 | zanadir | CI coverage report in the job summary |
+
+`.github/workflows/checks.yml`:
+
+| Job | What it runs |
+|---|---|
+| secrets | gitleaks over the full git history |
+| sast | Semgrep's Go, Python, Flask and Dockerfile rules |
+| iac | Checkov over the Dockerfiles, compose file and workflows |
+| workflow-security | zizmor over the workflows |
+| end-of-life | Trivy on each built image, failing if its base OS is end-of-life |
+| load-test | a 30-second k6 run against the compose stack: 5 users posting and reading trees, failing on any error, wrong body or p95 over 500 ms |
+| sbom | an SPDX SBOM of each built image, kept as a workflow artifact |
+| base-image-signature | cosign verifies the distroless base is Google's signed build |
+| licenses | Grant checks the Go and Python dependencies against the allowlist in `.grant.yaml` |
 
 The server image is multi-stage: a static binary on distroless, non-root, about 26 MB.
 
