@@ -1,0 +1,20 @@
+require-license: true
+allow:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - BSL-1.0
+  - PSF-2.0
+ignore-packages:
+  # This repository's own Go module, not a dependency.
+  - go-server
+  # LGPL with an OpenSSL exception; used unmodified as a dynamically loaded library.
+  - psycopg2-binary
+  # BSD-3-Clause; syft does not read the dist-info/licenses/ file it ships in.
+  - jinja2
+  # MIT; syft reads notice.go (Postgres NOTICE messages) as a NOTICE file.
+  - github.com/lib/pq
+  # MIT; the second licence covers only the logo files in assets/.
+  - github.com/quic-go/quic-go

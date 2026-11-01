@@ -26,6 +26,7 @@ services:
     ports:
       - "8081:8081"
     environment:
+      # checkov:skip=CKV_SECRET_4: local-only credentials for the compose database, also set in postgres/Dockerfile
       DATABASE_URL: postgresql://aryon:aryon@postgres:5432/aryondb?sslmode=disable
       FLASK_APP: app.py
       FLASK_ENV: development
